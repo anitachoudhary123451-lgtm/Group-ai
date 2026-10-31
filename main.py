@@ -1,22 +1,43 @@
 import os
 import io
+import numpy as np
 from PIL import Image
-import open_nsfw2 as nsfw
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
 
-# Render से सिर्फ Bot Token उठाएगा (AI key की अब कोई जरूरत नहीं है!)
+# AI Model import - sahi wala
+from opennsfw2 import make_open_nsfw_model
+
+# Model ko ek hi baar load karo (bahar)
+print("AI Model loading...")
+nsfw_model = make_open_nsfw_model()
+print("AI Model loaded!")
+
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "your_bot_token")
 
-# 18+ शब्दों की लिस्ट (टेक्स्ट के लिए)
 BAD_WORDS = ["badword1", "badword2", "adultword"] 
+
+def predict_nsfw(pil_image):
+    try:
+        # Model ko 256x256 size chahiye
+        img = pil_image.convert("RGB")
+        img = img.resize((256, 256))
+        img_array = np.array(img) / 255.0
+        img_array = np.expand_dims(img_array, axis=0)
+        
+        # Predict
+        score = nsfw_model.predict(img_array)[0][0]
+        return score
+    except Exception as e:
+        print(f"Predict error: {e}")
+        return 0.0
 
 async def filter_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
     if not message or not update.effective_chat or update.effective_chat.type not in ["group", "supergroup"]:
         return
 
-    # 1. टेक्स्ट मैसेज चेक करने के लिए
+    # 1. Text check
     if message.text:
         text = message.text.lower()
         if any(word in text for word in BAD_WORDS):
@@ -26,24 +47,17 @@ async def filter_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 print(f"Error deleting text: {e}")
 
-    # 2. फोटो चेक करने के लिए (यह AI सिर्फ फोटो और गिफ्स पर काम करता है)
+    # 2. Photo check
     if message.photo:
         try:
-            # सबसे बड़ी साइज वाली फोटो सिलेक्ट करें
             media_file = await message.photo[-1].get_file()
-
-            # फोटो को सीधे रैम (BytesIO) में डाउनलोड करें
             file_bytes = io.BytesIO()
             await media_file.download_to_memory(out=file_bytes)
             file_bytes.seek(0)
-
-            # PIL Image में बदलें
             image = Image.open(file_bytes)
 
-            # AI मॉडल से फोटो की जांच करें (यह 0.0 से 1.0 के बीच स्कोर देता है)
-            nsfw_probability = nsfw.predict_image(image)
+            nsfw_probability = predict_nsfw(image)
 
-            # अगर 18+ होने की संभावना 0.6 (60%) से ज्यादा है तो डिलीट करें
             if nsfw_probability > 0.6:
                 try:
                     await message.delete()
@@ -55,13 +69,9 @@ async def filter_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"Error checking media: {e}")
 
 def main():
-    # बॉट शुरू करें
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-    
-    # टेक्स्ट और फोटो मैसेजेस को मॉनिटर करें
     app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO, filter_messages))
-    
-    print("100% फ्री AI बॉट चालू हो गया है...")
+    print("100% Free AI Bot chalu ho gaya hai...")
     app.run_polling()
 
 if __name__ == '__main__':
